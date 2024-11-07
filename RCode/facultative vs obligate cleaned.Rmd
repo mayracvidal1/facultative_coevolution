@@ -1,0 +1,573 @@
+---
+title: "Facultative and obligate coevolution"
+author: "Mayra Vidal"
+date: "2024-10-24"
+output: html_document
+---
+
+```{r}
+setwd("~/OneDrive - University of Massachusetts Boston/Yeast/Coevolution no cheater")
+library(lme4)
+library(ggpubr)
+library(dplyr)
+library(multcomp)
+library(metafor)
+
+coev<-read.csv("~/OneDrive - University of Massachusetts Boston/Yeast/Coevolution no cheater/diff_time-shift_facult2021.csv")
+
+coevb<-read.csv("~/OneDrive - University of Massachusetts Boston/Yeast/Coevolution no cheater/diff_time-shift_fac+ob2021.csv")
+
+eff_both2<-read.csv("~/OneDrive - University of Massachusetts Boston/Yeast/Coevolution no cheater/eff_both_cOD.csv")
+
+
+```
+
+```{r} 
+#Time-shift
+head(coev)
+
+#Trying out Sheng's code to calculate the difference from ancestrals
+
+coev2=coev%>%
+  mutate(is_anc=if_else(Culture_ID=='Ancestral',1,0))%>%
+  group_by(Combo, Experimental_plate) %>%
+  mutate(ODc_anc=sum(is_anc*OD)/sum(is_anc),
+                     ODcc=(OD-ODc_anc)/ODc_anc, Combo=as.character(Combo))%>%
+           ungroup()
+
+
+head(coev2)
+coev2$time_point<-as.factor(coev2$time_point)
+
+
+
+ggplot(coev2, aes(time_point, ODcc, color=Culture_ID))+
+  facet_grid(type~Combo)+
+  geom_point()+
+  geom_line(data=coev2%>%group_by(Culture_ID, time_point)%>%summarise(ODcc=mean(ODcc)))
+
+#6C from plate 2 @ week 15 seems to be growing more than the others for all combinations, but it was intermediary at other time-points.
+#5D plate 1 grows more than others @ weeks 8 and 10, for all combinations.
+
+
+```
+
+```{r}
+str(coev2)
+
+#Testing if there is significant differences among cultures
+mod_EA<-mixed(ODcc~Culture_ID*time_point+(1|Experimental_plate), data=coev2%>%filter(type=="EA"))
+anova(mod_EA)
+
+mod_means<-emmeans(mod_EA, list(pairwise ~ Culture_ID))
+
+model_means_cld <- cld(object = mod_means,
+                       adjust = "Tukey",
+                       Letters = letters,
+                       alpha = 0.05)
+model_means_cld
+#This is not by time-point, so considering all time-points,5D, 5H, 6C, 6F grow more, 5B, 6B, 6H might grow less.
+
+mod_AE<-mixed(ODcc~Culture_ID*time_point+(1|Experimental_plate), data=coev2%>%filter(type=="AE"))
+anova(mod_AE)
+mod_means2<-emmeans(mod_AE, list(pairwise ~ Culture_ID*time_point))
+
+model_means_cld2 <- cld(object = mod_means2,
+                       adjust = "Tukey",
+                       Letters = letters,
+                       alpha = 0.05)
+model_means_cld2
+
+#Only marginal differences, but interaction is significant. Main differences are in week 15, between 6H, 5A, 5D in comparison to 6C.
+
+mod_EE<-mixed(ODcc~Culture_ID*time_point+(1|Experimental_plate), data=coev2%>%filter(type=="EE"))
+anova(mod_EE)
+
+mod_means3<-emmeans(mod_EE, list(pairwise ~ Culture_ID))
+
+model_means_cld3 <- cld(object = mod_means3,
+                       adjust = "Tukey",
+                       Letters = letters,
+                       alpha = 0.05)
+model_means_cld3 #This is weird... there are some numbers that are way too high, but I cannot figure out why...
+#5D and 6C growing more when it's both evolved.
+
+str(coev2)
+
+coev2$time_point<-as.numeric(coev2$time_point)
+
+dataop_long_sum = 
+  coev2 %>% 
+  group_by(Combo, Culture_ID, time_point, type) %>% 
+          summarise(ODcc = mean(ODcc))  %>% 
+  filter(Culture_ID != "Ancestral") %>% 
+  mutate(ODcc = if_else(time_point == 0, 0, ODcc))
+
+str(dataop_long_sum)
+```
+
+```{r}
+#Testing for coevolution with facultative only
+coev2$time_point<-as.factor(coev2$time_point)
+str(coev2)
+
+test_LysE<-lmer(ODcc~time_point-1 + (1|Culture_ID), data=coev2%>%filter(type=="AE" & Culture_ID != 'Ancestral'))
+summary(test_LysE)
+hist(residuals(test_LysE))
+Anova(test_LysE)
+check_model(test_LysE)
+
+
+test_AdeE<-lmer(ODcc~time_point-1 + (1|Culture_ID), data=coev2%>%filter(type=="EA" & Culture_ID != 'Ancestral'))
+summary(test_AdeE)
+Anova(test_AdeE)
+check_model(test_AdeE)
+
+test_EE<-lmer(ODcc~time_point-1 + (1|Culture_ID), data=coev2%>%filter(type=="EE" & Culture_ID != 'Ancestral'))
+summary(test_EE)
+Anova(test_EE)
+check_model(test_EE)
+
+```
+
+```{r}
+#Statistically compare facultative and obligate time-shift
+coev2b=coevb%>%
+  mutate(is_anc=if_else(type=='AA',1,0))%>%
+  group_by(Combo, Experimental_plate) %>%
+  mutate(ODc_anc=sum(is_anc*OD)/sum(is_anc),
+                     ODcc=(OD-ODc_anc)/ODc_anc, Combo=as.character(Combo))%>%
+           ungroup()
+
+coev2b$time_point<-as.factor(coev2b$time_point)
+
+#For Ade anc, Lys Evo
+AEobfac<-lmer(ODcc~time_point*Mutualism + (1|Combo), data=coev2b%>%filter(type=="AE"))
+anova(AEobfac)
+summary(AEobfac)
+
+mod_means<-emmeans(AEobfac, list(pairwise ~ time_point*Mutualism))
+
+model_means_cld <- cld(object = mod_means,
+                       adjust = "Tukey",
+                       Letters = letters,
+                       alpha = 0.05)
+
+model_means_cld
+
+#For Ade evo, Lys anc
+EAobfac<-lmer(ODcc~time_point*Mutualism + (1|Combo), data=coev2b%>%filter(type=="EA"))
+summary(EAobfac)
+anova(EAobfac)
+
+mod_means2<-emmeans(EAobfac, list(pairwise ~ time_point*Mutualism))
+
+model_means_cld <- cld(object = mod_means2,
+                       adjust = "Tukey",
+                       Letters = letters,
+                       alpha = 0.05)
+
+model_means_cld
+
+#For Ade evo, Lys evo
+EEobfac<-lmer(ODcc~time_point*Mutualism + (1|Combo), data=coev2b%>%filter(type=="EE"))
+summary(EEobfac)
+anova(EEobfac)
+
+mod_means3<-emmeans(EEobfac, list(pairwise ~ time_point*Mutualism))
+
+model_means_cld <- cld(object = mod_means3,
+                       adjust = "Tukey",
+                       Letters = letters,
+                       alpha = 0.05)
+
+model_means_cld
+```
+
+```{r}
+eff_both2$Strain<-as.factor(eff_both2$Strain)
+eff_both2$time_point<-as.numeric(eff_both2$time_point)
+
+
+eff_fac<-eff_both2[grep("facultative", eff_both2$Mutualism),]
+
+eff_fac2 =
+  eff_fac %>% 
+  mutate(combo = if_else(Strain %in% c(1039, 1063), 'Combo 2', 'Combo 1'))
+
+dataeff_long_sum = 
+  eff_fac2 %>% 
+  group_by(Mutualist, Culture_ID, time_point, Strain) %>% 
+          summarise(ODcc = mean(ODcc))  %>% 
+  filter(Culture_ID != "Ancestral") %>% 
+  mutate(ODcc = if_else(time_point == 0, 0, ODcc))
+```
+
+
+```{r}
+#Efficiency 
+
+head(eff_both2)
+eff_both2$time_point<-as.factor(eff_both2$time_point)
+
+ggplot(eff_both2, aes(time_point, ODcc, color=Culture_ID))+
+  facet_grid(Mutualism~Strain)+
+  geom_point()+
+  geom_line(data=coev2%>%group_by(Culture_ID, time_point)%>%summarise(ODcc=mean(ODcc)))
+
+
+#I'll remove the extreme values (2 points 1039 week 8,culture 47 obligate mutualism) . I don't know what is the deal with these points, I double-checked them...
+problem_index<-which(eff_both2$ODcc >1) #Specify the exact point above that point
+eff_both2[problem_index, ] 
+eff_both2.2<-eff_both2[-problem_index, ]
+
+#Plot again
+ggplot(eff_both2.2, aes(time_point, ODcc, color=Culture_ID))+
+  facet_grid(Mutualism~Strain)+
+  geom_point()+
+  geom_line(data=coev2%>%group_by(Culture_ID, time_point)%>%summarise(ODcc=mean(ODcc)))
+
+
+
+```
+
+```{r}
+#Creating 2 separate datasets for Ade and Lys
+eff_AdeOP<-eff_both2[grep("AdeOP", eff_both2$Mutualist),]
+eff_LysOP<-eff_both2.2[grep("LysOP", eff_both2.2$Mutualist),]
+
+hist(eff_AdeOP$ODcc)
+qqnorm(eff_AdeOP$ODcc)
+hist(eff_LysOP$ODcc)
+qqnorm(eff_LysOP$ODcc)
+#not beautiful, but I think it's fine to consider as normal.
+
+#Checking how the cultures vary, all time-points combined
+testAde<-lm(ODcc~Culture_ID-1, data=eff_AdeOP%>%filter(Mutualism=="facultative" & !Culture_ID=="Ancestral"))
+summary(testAde) #5D is the only positive, but not significative.
+anova(testAde)
+
+qqnorm(residuals(testAde))
+shapiro.test(residuals(testAde)) #Pretty good for normal dist...
+
+testLys<-lm(ODcc~Culture_ID-1, data=eff_LysOP%>%filter(Mutualism=="facultative" & !Culture_ID=="Ancestral"))
+summary(testLys) #6B and 6F are the only significative and positive
+anova(testLys)
+
+#Now see how each time point vary, I need to include culture ID as random effect (strain had very low variance, boundary problem).
+test_effLys<-lmer(ODcc~time_point-1 +(1|Culture_ID), data=eff_LysOP%>%filter(Mutualism=="facultative" & !Culture_ID=="Ancestral"))
+summary(test_effLys) #Week 4 and 8 have higher efficiency than ancestral (10-14%).
+anova(test_effLys)
+
+test_effAde<-lmer(ODcc~as.factor(time_point)-1 +(1|Culture_ID), data=eff_AdeOP%>%filter(Mutualism=="facultative" & !Culture_ID=="Ancestral"))
+summary(test_effAde) #No difference...
+anova(test_effAde)
+```
+
+```{r}
+write.csv(prod_both_Lys, "prod_both_lys.csv")
+
+write.csv(prod_both_ade, "prod_both_ade.csv")
+
+prod_fac<-read.csv("Facult_prod.csv")
+
+prod_fac$time_point<-as.factor(prod_fac$time_point)
+prod_fac$time_point<-as.numeric(prod_fac$time_point)
+
+dataeff_long_sum = 
+  prod_fac %>% 
+  group_by(Mutualist, Culture_ID, time_point, Strain) %>% 
+          summarise(testODcc = mean(testODcc))  %>% 
+  filter(Culture_ID != "Ancestral") %>% 
+  mutate(testODcc = if_else(time_point == 0, 0, testODcc))
+
+```
+
+
+```{r}
+#Correcting overproduction by growth - The corrected datasheet is already included
+
+#Density dependent growth
+calc_Nr = function(t, r, K, N0 = 0.1, tdelay = 0){
+  ex_part = exp(-r*(t-tdelay))
+  Nt = K/(1+((K-N0)/N0)*ex_part)
+  return(Nt)
+}
+
+calc_Nr(t = 24, r = 0.4, K = 12)
+## [1] 11.90406
+
+
+#This function can be integrated numerically in R easily
+radeop = 0.4375
+rlysop = 0.4145
+
+calc_Nr = function(t, r, K, N0 = 0.1, tdelay = 0){
+  ex_part = exp(-r*(t-tdelay))
+  Nt = K/(1+((K-N0)/N0)*ex_part)
+  return(Nt)
+}
+
+get_growth_int = function(K, ade = TRUE, t_od = 24){
+  if (ade) {r = radeop}
+  else {r = rlysop}
+  calc_Nr_t = function(t){
+  return(calc_Nr(t, r = r, K = K, N0 = 0.1, tdelay = 1))
+  }
+  out = integrate(f = calc_Nr_t, lower = 0, upper = t_od)
+  return (out$value)
+}
+
+get_growth_int(12)
+## [1] 144.9059
+
+#Use the integral to analyze my data for AdeOP (I won't run this because it's already done)
+#prod_Ade<-production[grep("AdeOP", production$Mutualist),]
+#prod_Lys<-production[grep("LysOP", production$Mutualist),]
+
+#growth_int = 1:length(prod_Ade$OD_filtrate)
+#for(i in 1:length(prod_Ade$OD_filtrate)){
+#  growth_int[i] = get_growth_int(prod_Ade$OD_filtrate[i], ade = (prod_Ade$Mutualist[i] == "AdeOP"), t_od = 48)
+#}
+#prod_Ade$growth_int = growth_int
+#data_mayra_Ade = 
+#  prod_Ade %>% 
+#  mutate(corrected_OD = OD_teststrain/growth_int,
+#         OD_scaled = scale(OD_teststrain),
+#         c_OD_scaled = scale(corrected_OD), )
+
+
+#Use ratio to analyze data for LysOP
+#data_mayra_Lys = 
+#  prod_Lys %>% 
+#  mutate(corrected_OD = OD_teststrain/OD_filtrate,
+#         OD_scaled = scale(OD_teststrain),
+#         c_OD_scaled = scale(corrected_OD), )
+
+
+```
+
+```{r}
+#Getting corrected production data for obligate mutualism
+#Density dependent growth
+calc_Nr = function(t, r, K, N0 = 0.1, tdelay = 0){
+  ex_part = exp(-r*(t-tdelay))
+  Nt = K/(1+((K-N0)/N0)*ex_part)
+  return(Nt)
+}
+
+calc_Nr(t = 24, r = 0.4, K = 12)
+## [1] 11.90406
+
+
+#This function can be integrated numerically in R easily
+radeop = 0.4375
+rlysop = 0.4145
+
+calc_Nr = function(t, r, K, N0 = 0.1, tdelay = 0){
+  ex_part = exp(-r*(t-tdelay))
+  Nt = K/(1+((K-N0)/N0)*ex_part)
+  return(Nt)
+}
+
+get_growth_int = function(K, ade = TRUE, t_od = 24){
+  if (ade) {r = radeop}
+  else {r = rlysop}
+  calc_Nr_t = function(t){
+  return(calc_Nr(t, r = r, K = K, N0 = 0.1, tdelay = 1))
+  }
+  out = integrate(f = calc_Nr_t, lower = 0, upper = t_od)
+  return (out$value)
+}
+
+get_growth_int(12)
+## [1] 144.9059
+
+#Use the integral to analyze my data for AdeOP
+
+#prod_Ade_ob<-read.csv("prod_obligAde_July20v2.csv")
+#head(prod_Ade_ob)
+
+#growth_int = 1:length(prod_Ade_ob$OD)
+#for(i in 1:length(prod_Ade_ob$OD)){
+#  growth_int[i] = get_growth_int(prod_Ade_ob$OD[i], ade = (prod_Ade_ob$Mutualist[i] == "AdeOP"), t_od = 48)
+#}
+#prod_Ade_ob$growth_int = growth_int
+#data_mayra_Ade_ob = 
+#  prod_Ade_ob %>% 
+#  mutate(corrected_OD = OD_teststrain/growth_int,
+#         OD_scaled = scale(OD_teststrain),
+#         c_OD_scaled = scale(corrected_OD), )
+
+#write.table(data_mayra_Ade_ob, "corrected_prod_Ade_ob.txt", sep="\t")
+
+
+#Use ratio to analyze data for LysOP
+#prod_Lys_ob<-read.csv("production_Lys_obligate.csv")
+#head(prod_Ade_ob)
+
+#data_mayra_Lys_ob = 
+#  prod_Lys_ob %>% 
+#  mutate(corrected_OD = OD_teststrain/OD_filtrate,
+#         OD_scaled = scale(OD_teststrain),
+#         c_OD_scaled = scale(corrected_OD), )
+
+
+#write.table(data_mayra_Lys_ob, "corrected_prod_Lys_ob.txt", sep="\t")
+
+dat_adeop<-read.csv('~/OneDrive - University of Massachusetts Boston/Yeast/Coevolution no cheater/corrected_prod_Ade_fac+ob.csv')
+
+dat_lysop<-read.csv('~/OneDrive - University of Massachusetts Boston/Yeast/Coevolution no cheater/corrected_prod_Lys_ob+fac.csv')
+
+## Now use Sheng's code to get the value relative to ancestral.
+prod_both_Ade =
+  dat_adeop %>% 
+  mutate(is_anc = if_else(Culture_ID == 'Ancestral', 1, 0),
+         Experimental_plate = if_else(Mutualism == 'facultative', Experimental_plate, as.integer(1)))%>% 
+  group_by(Strain, Experimental_plate) %>% 
+  mutate(testODc_anc = sum(is_anc * corrected_OD)/sum(is_anc),
+         testODcc = (corrected_OD - testODc_anc)/testODc_anc,
+         strain = as.character(Strain)) %>% 
+  ungroup()
+
+
+prod_both_Lys =
+  dat_lysop %>% 
+  filter(!is.na(OD_filtrate)) %>% 
+  mutate(is_anc = if_else(Culture_ID == 'Ancestral', 1, 0),
+         Experimental_plate = if_else(Mutualism == 'facultative', Experimental_plate, as.integer(1)))%>% 
+  group_by(Strain, Experimental_plate) %>% 
+  mutate(testODc_anc = sum(is_anc * corrected_OD)/sum(is_anc),
+         testODcc = (corrected_OD - testODc_anc)/testODc_anc,
+         strain = as.character(Strain)) %>% 
+  ungroup()
+
+```
+
+```{r}
+#Now see how each time point vary, I need to include culture ID as random effect (strain had very low variance, boundary problem).
+prod_both_Lys$Strain<-as.factor(prod_both_Lys$Strain)
+prod_both_Lys$time_point<-as.factor(prod_both_Lys$time_point)
+
+prod_both_Ade$Strain<-as.factor(prod_both_Ade$Strain)
+prod_both_Ade$time_point<-as.factor(prod_both_Ade$time_point)
+
+test_prodLys<-lmer(testODcc~time_point-1 +(1|Culture_ID), data=prod_both_Lys%>%filter(Mutualism=="facultative" & !Culture_ID=="Ancestral"))
+summary(test_prodLys)
+
+
+test_prodAde<-lmer(testODcc~time_point-1 +(1|Culture_ID), data=prod_both_Ade%>%filter(Mutualism=="facultative" & !Culture_ID=="Ancestral"))
+summary(test_prodAde) 
+anova(test_prodAde)
+
+```
+
+
+```{r}
+###########################################
+#Trying to compare the trends, assuming they are polynomial. Time-point needs to be numeric
+#Suggestion from: https://stats.stackexchange.com/questions/231059/compare-the-statistical-significance-of-the-difference-between-two-polynomial-re
+
+prod_both_Ade$time_point<-as.numeric(prod_both_Ade$time_point)
+test0<-lm(ln_cOD~poly(time_point,2), data=prod_both_Ade)
+test1<-lm(ln_cOD~poly(time_point,2)*Mutualism, data=prod_both_Ade)
+anova(test0,test1) #significant, means that the lines are different for each type.
+
+
+#Test if polynomial is the best fit
+test_normal<-lmer(testODcc~time_point + (1|Culture_ID), data=prod_both_Ade%>%filter(Mutualism == "facultative"))
+test_poly2<-lmer(testODcc~poly(time_point,2) + (1|Culture_ID), data=prod_both_Ade%>%filter(Mutualism == "facultative"))
+
+anova(test_normal, test_poly2) #Poly 2 def better,now test the degrees (2 or 3)
+
+test_poly3<-lmer(testODcc~poly(time_point,3) + (1|Culture_ID), data=prod_both_Ade%>%filter(Mutualism == "facultative"))
+
+anova(test_poly3, test_poly2) #Same thing, use 2.
+```
+
+```{r}
+#Now for obligate:
+test_normal<-lmer(testODcc~time_point + (1|Culture_ID), data=prod_both_Ade%>%filter(Mutualism == "obligate"))
+test_poly2<-lmer(testODcc~poly(time_point,2) + (1|Culture_ID), data=prod_both_Ade%>%filter(Mutualism == "obligate"))
+
+anova(test_normal, test_poly2) #Poly 2 marginally better, not test degrees (2 or 3)
+
+test_poly3<-lmer(testODcc~poly(time_point,3) + (1|Culture_ID), data=prod_both_Ade%>%filter(Mutualism == "obligate"))
+
+anova(test_poly3, test_poly2) #3 better than 2.
+
+#Production Ade
+test0<-lm(testODcc~poly(time_point,3), data=prod_both_Ade)
+test1<-lm(testODcc~poly(time_point,3)*Mutualism, data=prod_both_Ade)
+anova(test0,test1) #significant, means that the lines are different for each type.
+
+```
+
+```{r}
+#Now for Lys obligate distribution:
+prod_both_Lys$time_point<-as.numeric(prod_both_Lys$time_point)
+test_normal<-lmer(testODcc~time_point + (1|Culture_ID), data=prod_both_Lys%>%filter(Mutualism == "obligate"))
+summary(test_normal)
+test_poly2<-lmer(testODcc~poly(time_point,2) + (1|Culture_ID), data=prod_both_Lys%>%filter(Mutualism == "obligate"))
+
+anova(test_normal, test_poly2) #Poly 2 is better
+
+test_poly3<-lmer(testODcc~poly(time_point,3) + (1|Culture_ID), data=prod_both_Lys%>%filter(Mutualism == "obligate"))
+
+anova(test_poly3, test_normal) #Poly 3 is better.
+
+#Lys facultative distribution
+test_normal<-lmer(testODcc~time_point + (1|Culture_ID), data=prod_both_Lys%>%filter(Mutualism == "facultative"))
+summary(test_normal)
+test_poly2<-lmer(testODcc~poly(time_point,2) + (1|Culture_ID), data=prod_both_Lys%>%filter(Mutualism == "facultative"))
+
+anova(test_normal, test_poly2) #Normal is better
+
+test_poly3<-lmer(testODcc~poly(time_point,3) + (1|Culture_ID), data=prod_both_Lys%>%filter(Mutualism == "facultative"))
+
+anova(test_poly3, test_normal) #Poly 3 is slightly better, use Poly 3 to compare them
+
+#Now compare obligate and facultative for Lys production
+test0<-lm(testODcc~poly(time_point,3), data=prod_both_Lys)
+test1<-lm(testODcc~poly(time_point,3)*Mutualism, data=prod_both_Lys)
+anova(test0,test1) #significant, means that the lines are different for each type.
+
+```
+
+```{r}
+#Compare efficiency Lys (seem more similar) 
+test0<-lm(ODcc~poly(time_point,2), data=eff_both2%>%filter(Mutualist=="LysOP"))
+test1<-lm(ODcc~poly(time_point,2)*Mutualism, data=eff_both2%>%filter(Mutualist=="LysOP"))
+anova(test0,test1) #significant, means that the lines are different for each type.
+
+test0<-lm(ln_diff~poly(time_point,2), data=eff_both2%>%filter(Mutualist =="AdeOP"))
+test1<-lm(ln_diff~poly(time_point,2)*Mutualism, data=eff_both2%>%filter(Mutualist=="AdeOP"))
+anova(test0,test1) #P=0.03, more similar...
+
+```
+
+```{r}
+#sheng calculated the rate of evolution in production for ade and lys mutualists in both obligate and facultative mutualisms. She used the value of overprodution at t+1 minus t. And there was a positive correlation btw rate of evolution in ade and lys for the obligate mutualism, but not the facultative.
+
+data_td_wide = read.csv("~/OneDrive - University of Massachusetts Boston/Yeast/Coevolution no cheater/rate_of_evo_production.csv")
+
+postscript("~/OneDrive - University of Massachusetts Boston/Manuscripts/coevolution facultative/rate evolution.eps", width = 6, height = 3,horizontal = FALSE, onefile = FALSE)
+
+head(data_td_wide)
+
+test_rate<-lm(deltaop_ade_c~deltaop_lys_c, data=data_td_wide%>%filter(Mutualism == "facultative"))
+anova(test_rate)
+
+test_rateob<-lm(deltaop_ade_c~deltaop_lys_c, data=data_td_wide%>%filter(Mutualism == "obligate"))
+anova(test_rateob)
+
+summary(lm(deltaop_lys_c ~ deltaop_ade_c + time_point + strain, 
+           data = data_td_wide %>% filter(Mutualism == 'facultative')))
+
+summary(lm(deltaop_lys_c ~ deltaop_ade_c + time_point+strain, 
+           data = data_td_wide %>% filter(Mutualism == 'obligate')))
+
+data_td_wide$time_point<-as.numeric(data_td_wide$time_point)
+
+```
+
